@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.profiles import upsert_profile
+from app.profiles import profile_dedupe_key, upsert_profile, validate_profile
 
 SERPER_URL = "https://google.serper.dev/search"
 LINKEDIN_SUFFIX = re.compile(r"\s*\|\s*LinkedIn\s*$", re.IGNORECASE)
@@ -263,6 +263,50 @@ def _run_row(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     return dict(row)
 
 
+def _preserve_existing_profile(
+    conn: sqlite3.Connection,
+    project_id: int,
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    dedupe_key = profile_dedupe_key(candidate)
+    existing = conn.execute(
+        """
+        SELECT * FROM profiles
+        WHERE project_id = ? AND dedupe_key = ?
+        """,
+        (project_id, dedupe_key),
+    ).fetchone()
+    if existing is None:
+        return candidate
+
+    preserved: dict[str, Any] = {"source": existing["source"]}
+    if existing["source_query"] is not None:
+        preserved["source_query"] = existing["source_query"]
+    for field in ("profile_url", "name", "current_company", "role"):
+        if existing[field] is not None:
+            preserved[field] = existing[field]
+        elif candidate.get(field) is not None:
+            preserved[field] = candidate[field]
+    return preserved
+
+
+def _validated_search_profile(
+    result: Mapping[str, Any],
+    query: str,
+    company: str,
+) -> dict[str, Any]:
+    metadata = dict(result)
+    metadata["query"] = query
+    extracted = extract_result(metadata, company)
+    candidate = {
+        field: value
+        for field, value in extracted.items()
+        if value is not None and field != "review_status"
+    }
+    normalized = validate_profile(candidate)
+    return {field: normalized[field] for field in candidate}
+
+
 def run_search(
     conn: sqlite3.Connection,
     project_id: int,
@@ -312,16 +356,23 @@ def run_search(
             f"{provider_name} search failed: {error}"
         ) from error
 
+    try:
+        profiles = [
+            _validated_search_profile(result, query, project["company"])
+            for query, result in results
+        ]
+    except ValueError as error:
+        provider_error = SearchProviderError(
+            f"{provider_name} returned invalid result metadata: {error}"
+        )
+        _mark_failed(conn, run_id, provider_error)
+        raise provider_error from error
+
     savepoint = f"search_run_{uuid.uuid4().hex}"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
-        for query, result in results:
-            metadata = dict(result)
-            metadata["query"] = query
-            profile = extract_result(metadata, project["company"])
-            # Let the profile API default new records to pending without treating
-            # that default as an instruction to downgrade reviewed duplicates.
-            profile.pop("review_status")
+        for profile in profiles:
+            profile = _preserve_existing_profile(conn, project_id, profile)
             upsert_profile(conn, project_id, profile)
         conn.execute(
             """

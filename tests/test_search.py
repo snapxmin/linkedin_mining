@@ -241,9 +241,9 @@ def test_run_search_records_completed_run_and_upserts_pending_profiles(
     assert run["error_message"] is None
     profiles = list_profiles(connection, project_id)
     assert len(profiles) == 1
-    assert profiles[0]["role"] == "Engineer"
+    assert profiles[0]["role"] == "Researcher"
     assert profiles[0]["source"] == "search"
-    assert profiles[0]["source_query"] == provider.queries[-1]
+    assert profiles[0]["source_query"] == provider.queries[0]
     assert profiles[0]["review_status"] == "pending"
 
 
@@ -267,6 +267,47 @@ def test_run_search_does_not_downgrade_a_verified_duplicate(search_connection):
     assert profile["review_status"] == "verified"
 
 
+@pytest.mark.parametrize("review_status", ["verified", "rejected"])
+def test_weak_search_duplicate_preserves_enrichment_provenance_and_review(
+    search_connection,
+    review_status,
+):
+    connection, project_id = search_connection
+    original_data = {
+        "name": "Manually Confirmed Name",
+        "current_company": "Confirmed Company",
+        "university": "Confirmed University",
+        "degree": "Confirmed Degree",
+        "location": "Confirmed Location",
+        "role": "Confirmed Role",
+        "years_experience": 12,
+        "profile_url": "https://www.linkedin.com/in/fictional-ada",
+        "source": "manual",
+        "source_query": "manual verification notes",
+        "review_status": review_status,
+    }
+    original = upsert_profile(connection, project_id, original_data)
+
+    class WeakDuplicateProvider:
+        name = "weak"
+
+        def search(self, query):
+            return [
+                {
+                    "title": "Public profile directory",
+                    "url": "https://www.linkedin.com/in/fictional-ada",
+                    "query": query,
+                }
+            ]
+
+    run_search(connection, project_id, WeakDuplicateProvider(), [])
+
+    profile = list_profiles(connection, project_id)[0]
+    assert profile["id"] == original["id"]
+    for field, expected in original_data.items():
+        assert profile[field] == expected
+
+
 def test_run_search_marks_failed_provider_run_without_profiles(search_connection):
     connection, project_id = search_connection
 
@@ -287,6 +328,45 @@ def test_run_search_marks_failed_provider_run_without_profiles(search_connection
     assert run["status"] == "failed"
     assert run["result_count"] == 0
     assert "service unavailable" in run["error_message"]
+    assert list_profiles(connection, project_id) == []
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {},
+        {
+            "title": "Ada Lovelace | LinkedIn",
+            "url": "javascript:alert(1)",
+        },
+    ],
+)
+def test_run_search_reports_unusable_metadata_and_writes_no_profiles(
+    search_connection,
+    malformed_result,
+):
+    connection, project_id = search_connection
+
+    class MalformedProvider:
+        name = "malformed"
+
+        def search(self, query):
+            return [
+                {
+                    "title": "Grace Hopper - Engineer - OKX | LinkedIn",
+                    "url": "https://www.linkedin.com/in/fictional-grace",
+                },
+                malformed_result,
+            ]
+
+    with pytest.raises(SearchProviderError, match="invalid result metadata"):
+        run_search(connection, project_id, MalformedProvider(), [])
+
+    run = connection.execute(
+        "SELECT status, result_count, error_message FROM search_runs"
+    ).fetchone()
+    assert tuple(run[:2]) == ("failed", 0)
+    assert "invalid result metadata" in run["error_message"]
     assert list_profiles(connection, project_id) == []
 
 

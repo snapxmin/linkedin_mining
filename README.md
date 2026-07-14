@@ -30,6 +30,15 @@ uvicorn app.main:app --reload
 
 打开 `http://127.0.0.1:8000/`。
 
+## GitHub Pages 演示
+
+静态演示站点展示 OKX 大学/职位/地点分布样例（1247 人虚构样本）：
+
+- 站点地址：https://snapxmin.github.io/linkedin_mining/
+- 若首次访问 404，请在仓库 **Settings → Pages** 中将 Source 设为 **GitHub Actions** 或 **Deploy from a branch → gh-pages / root**，然后等待 1–2 分钟。
+
+完整搜索、导入、复核与导出功能仍需本地运行上述命令。
+
 ## 演示流程（无需 API 密钥）
 
 1. 创建 `OKX` 项目。

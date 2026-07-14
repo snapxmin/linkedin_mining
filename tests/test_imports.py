@@ -112,6 +112,18 @@ def test_parse_csv_rejects_empty_or_malformed_content(content, message):
         parse_csv(content)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        'Name,"URL\nAda,https://example.com/ada\n',
+        'Name,URL\nAda,"https://example.com/ada\n',
+    ],
+)
+def test_parse_csv_wraps_malformed_headers_and_rows_as_value_errors(content):
+    with pytest.raises(ValueError, match=r"^CSV is malformed:"):
+        parse_csv(content)
+
+
 def test_import_csv_validates_entire_batch_before_writing(import_connection):
     connection, project_id = import_connection
     content = (

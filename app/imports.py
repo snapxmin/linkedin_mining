@@ -90,14 +90,15 @@ def parse_csv(content: bytes | str) -> list[dict[str, Any]]:
     """Parse CSV bytes or text into sparse, normalized profile dictionaries."""
     text = _decode_content(content)
     reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
-    if reader.fieldnames is None or not any(
-        _normalize_header(header) for header in reader.fieldnames
-    ):
-        raise ValueError("CSV header is empty")
-    headers = _mapped_headers(reader.fieldnames)
-    profiles: list[dict[str, Any]] = []
-
     try:
+        fieldnames = reader.fieldnames
+        if fieldnames is None or not any(
+            _normalize_header(header) for header in fieldnames
+        ):
+            raise ValueError("CSV header is empty")
+        headers = _mapped_headers(fieldnames)
+        profiles: list[dict[str, Any]] = []
+
         for row in reader:
             row_number = reader.line_num
             if None in row:

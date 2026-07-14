@@ -16,7 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["httpx2", "pytest"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -46,9 +46,38 @@ def _normalized_phrase(value: Any, field: str) -> str:
     return normalized
 
 
+MAX_SEARCH_ROLES = 10
+MAX_ROLE_LENGTH = 100
+
+
+def validate_search_roles(roles: Iterable[str] | None) -> list[str]:
+    """Validate role refinements before issuing provider requests."""
+    if roles is None:
+        return []
+    if not isinstance(roles, Iterable) or isinstance(roles, (str, bytes)):
+        raise ValueError("roles must be a list of strings")
+    normalized_roles: list[str] = []
+    for index, role in enumerate(roles, start=1):
+        if not isinstance(role, str):
+            raise ValueError(f"role {index} must be a string")
+        if not role.strip():
+            continue
+        if len(role) > MAX_ROLE_LENGTH:
+            raise ValueError(
+                f"role {index} exceeds the maximum length of {MAX_ROLE_LENGTH}"
+            )
+        normalized_roles.append(role)
+    if len(normalized_roles) > MAX_SEARCH_ROLES:
+        raise ValueError(
+            f"roles may include at most {MAX_SEARCH_ROLES} non-empty entries"
+        )
+    return normalized_roles
+
+
 def build_queries(company: str, roles: Iterable[str] | None = None) -> list[str]:
     """Build a base LinkedIn public-profile query and unique role refinements."""
     normalized_company = _normalized_phrase(company, "company")
+    roles = validate_search_roles(roles)
     base = f'site:linkedin.com/in "{normalized_company}"'
     queries = [base]
     seen: set[str] = set()
@@ -242,17 +271,42 @@ def _provider_name(provider: SearchProvider) -> str:
     return provider.__class__.__name__
 
 
+def sanitize_error_message(error: Exception) -> str:
+    """Return a safe audit message that never stores provider secrets."""
+    if isinstance(error, SearchProviderError):
+        message = str(error).strip() or error.__class__.__name__
+        return message[:2000]
+
+    message = str(error).strip()
+    if message and not _contains_sensitive_text(message):
+        return message[:2000]
+    return error.__class__.__name__
+
+
+def _contains_sensitive_text(text: str) -> bool:
+    lowered = text.lower()
+    sensitive_markers = (
+        "api_key",
+        "api-key",
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "bearer",
+    )
+    return any(marker in lowered for marker in sensitive_markers)
+
+
 def _mark_failed(
     conn: sqlite3.Connection, run_id: int, error: Exception
 ) -> None:
-    message = str(error).strip() or error.__class__.__name__
     conn.execute(
         """
         UPDATE search_runs
         SET status = 'failed', result_count = 0, error_message = ?
         WHERE id = ?
         """,
-        (message[:2000], run_id),
+        (sanitize_error_message(error), run_id),
     )
 
 

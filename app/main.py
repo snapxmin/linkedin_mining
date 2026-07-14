@@ -7,18 +7,30 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.analytics import aggregate, export_csv, summary
-from app.db import DatabasePath, connect, init_db
+from app.db import MEMORY_DB_URI, DatabasePath, connect, init_db
 from app.imports import import_csv
 from app.profiles import list_profiles, update_profile
-from app.search import DemoSearchProvider, SearchProvider, SearchProviderError, run_search
+from app.search import (
+    MAX_ROLE_LENGTH,
+    MAX_SEARCH_ROLES,
+    DemoSearchProvider,
+    SearchProvider,
+    SearchProviderError,
+    run_search,
+    validate_search_roles,
+)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 ReviewStatus = Literal["pending", "verified", "rejected"]
 AnalyticsScope = Literal["verified", "all"]
+TEMPLATES = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
 def _normalized_required_text(value: str) -> str:
@@ -26,6 +38,57 @@ def _normalized_required_text(value: str) -> str:
     if not normalized:
         raise ValueError("must not be blank")
     return normalized
+
+
+class PayloadTooLarge(Exception):
+    """Raised when a request body exceeds the configured upload limit."""
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized request bodies before route handlers consume them."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", ()))
+        content_length = headers.get(b"content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_bytes:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"detail": "CSV upload exceeds 5 MiB limit"},
+                    )
+                    await response(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise PayloadTooLarge()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except PayloadTooLarge:
+            response = JSONResponse(
+                status_code=413,
+                content={"detail": "CSV upload exceeds 5 MiB limit"},
+            )
+            await response(scope, receive, send)
 
 
 class ProjectCreate(BaseModel):
@@ -57,6 +120,11 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     roles: list[str] = Field(default_factory=list)
+
+    @field_validator("roles")
+    @classmethod
+    def validate_roles(cls, value: list[str]) -> list[str]:
+        return validate_search_roles(value)
 
 
 class SearchRunResponse(BaseModel):
@@ -147,6 +215,13 @@ def _project_or_404(connection: sqlite3.Connection, project_id: int) -> sqlite3.
     return project
 
 
+def _list_projects(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        "SELECT * FROM projects ORDER BY created_at DESC, id DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def create_app(
     database_path: DatabasePath | None = None,
     search_provider: SearchProvider | None = None,
@@ -155,9 +230,15 @@ def create_app(
     resolved_path: DatabasePath = database_path or os.environ.get(
         "DATABASE_PATH", "talent.db"
     )
-    if isinstance(resolved_path, Path):
-        resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    init_db(resolved_path)
+    memory_mode = str(resolved_path) == ":memory:"
+    memory_keeper: sqlite3.Connection | None = None
+    if memory_mode:
+        memory_keeper = connect(MEMORY_DB_URI, check_same_thread=False, uri=True)
+        init_db(MEMORY_DB_URI)
+    else:
+        if isinstance(resolved_path, Path):
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        init_db(resolved_path)
 
     application = FastAPI(
         title="Compliant Talent Research API",
@@ -168,8 +249,26 @@ def create_app(
         ),
     )
     application.state.database_path = resolved_path
-    application.state.search_provider = search_provider or DemoSearchProvider()
-    application.state.connection_factory = lambda: connect(resolved_path)
+    application.state.memory_keeper = memory_keeper
+    if search_provider is None:
+        application.state.search_provider = DemoSearchProvider()
+    else:
+        application.state.search_provider = search_provider
+
+    def connection_factory() -> sqlite3.Connection:
+        if memory_mode:
+            return connect(MEMORY_DB_URI, check_same_thread=False, uri=True)
+        return connect(resolved_path, check_same_thread=False)
+
+    application.state.connection_factory = connection_factory
+    application.add_middleware(
+        RequestBodyLimitMiddleware, max_bytes=MAX_UPLOAD_BYTES
+    )
+    application.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).parent / "static"),
+        name="static",
+    )
 
     def get_connection(request: Request) -> Generator[sqlite3.Connection, None, None]:
         connection = request.app.state.connection_factory()
@@ -195,6 +294,37 @@ def create_app(
     def health() -> dict[str, str]:
         """Report that the local API process is ready."""
         return {"status": "ok"}
+
+    @application.get("/", response_class=HTMLResponse, tags=["web"])
+    def home(request: Request, connection: Connection) -> HTMLResponse:
+        """Render the project list and creation form."""
+        return TEMPLATES.TemplateResponse(
+            request,
+            "index.html",
+            {"projects": _list_projects(connection)},
+        )
+
+    @application.get(
+        "/projects/{project_id}",
+        response_class=HTMLResponse,
+        tags=["web"],
+    )
+    def project_dashboard(
+        project_id: int,
+        request: Request,
+        connection: Connection,
+    ) -> HTMLResponse:
+        """Render the project review and analytics dashboard."""
+        project = _project_or_404(connection, project_id)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "project.html",
+            {
+                "project": dict(project),
+                "max_search_roles": MAX_SEARCH_ROLES,
+                "max_role_length": MAX_ROLE_LENGTH,
+            },
+        )
 
     @application.post(
         "/api/projects",
@@ -245,8 +375,6 @@ def create_app(
                 payload.roles,
             )
         except SearchProviderError:
-            # run_search records a safe audit state before raising. Preserve it
-            # while keeping upstream details out of the HTTP response.
             connection.commit()
             raise HTTPException(
                 status_code=502, detail="Search provider unavailable"

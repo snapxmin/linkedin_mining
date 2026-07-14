@@ -6,11 +6,23 @@ from contextlib import contextmanager
 from pathlib import Path
 
 DatabasePath = str | Path
+MEMORY_DB_URI = "file:linkedin_mining_mem?mode=memory&cache=shared"
 
 
-def connect(path: DatabasePath) -> sqlite3.Connection:
+def connect(
+    path: DatabasePath,
+    *,
+    check_same_thread: bool = True,
+    uri: bool = False,
+) -> sqlite3.Connection:
     """Open a configured SQLite connection."""
-    connection = sqlite3.connect(path)
+    if path == MEMORY_DB_URI:
+        uri = True
+    connection = sqlite3.connect(
+        path,
+        check_same_thread=check_same_thread,
+        uri=uri,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA journal_mode = WAL")

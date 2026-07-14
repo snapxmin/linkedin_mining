@@ -1,8 +1,13 @@
 import csv
 import io
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app.db import connect
+from app.main import create_app
+from app.search import MAX_ROLE_LENGTH, MAX_SEARCH_ROLES
 
 
 def test_health_reports_ready(client):
@@ -90,12 +95,14 @@ def test_search_provider_errors_are_safe_and_failed_run_is_committed(app_factory
         assert response.status_code == 502
         assert response.json() == {"detail": "Search provider unavailable"}
         assert secret not in response.text
-        with app.state.connection_factory() as connection:
+        with connect(app.state.database_path) as connection:
             run = connection.execute(
-                "SELECT status FROM search_runs WHERE project_id = ?",
+                "SELECT status, error_message FROM search_runs WHERE project_id = ?",
                 (project["id"],),
             ).fetchone()
         assert run["status"] == "failed"
+        assert run["error_message"] is not None
+        assert secret not in run["error_message"]
 
 
 def test_search_missing_project_is_404(client):
@@ -276,3 +283,47 @@ def test_export_validates_scope_and_project(client, project):
         f"/api/projects/{project['id']}/export.csv", params={"scope": "rejected"}
     ).status_code == 422
     assert client.get("/api/projects/999999/export.csv").status_code == 404
+
+
+def test_concurrent_requests_do_not_fail_on_sqlite_threading(app_factory):
+    app = app_factory()
+    with TestClient(app) as test_client:
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [
+                executor.submit(test_client.get, "/health") for _ in range(40)
+            ]
+            responses = [future.result() for future in futures]
+    assert all(response.status_code == 200 for response in responses)
+
+
+def test_memory_database_supports_multiple_requests():
+    app = create_app(database_path=":memory:")
+    with TestClient(app) as test_client:
+        created = test_client.post(
+            "/api/projects", json={"name": "Memory", "company": "OKX"}
+        )
+        assert created.status_code == 201
+        project_id = created.json()["id"]
+        fetched = test_client.get(f"/api/projects/{project_id}")
+        assert fetched.status_code == 200
+        assert fetched.json()["company"] == "OKX"
+
+
+def test_search_rejects_too_many_roles(client, project):
+    response = client.post(
+        f"/api/projects/{project['id']}/search",
+        json={"roles": [f"role-{index}" for index in range(MAX_SEARCH_ROLES + 1)]},
+    )
+
+    assert response.status_code == 422
+    assert str(MAX_SEARCH_ROLES) in response.text
+
+
+def test_search_rejects_overlong_role(client, project):
+    response = client.post(
+        f"/api/projects/{project['id']}/search",
+        json={"roles": ["x" * (MAX_ROLE_LENGTH + 1)]},
+    )
+
+    assert response.status_code == 422
+    assert str(MAX_ROLE_LENGTH) in response.text

@@ -52,6 +52,21 @@ def test_normalize_url_rejects_non_http_urls(value):
         normalize_url(value)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example .com/in/ada",
+        "https://example.com/in/ada lovelace",
+        "https://-example.com/in/ada",
+        "https://example..com/in/ada",
+        "https://example_com/in/ada",
+    ],
+)
+def test_normalize_url_rejects_whitespace_and_invalid_hosts(value):
+    with pytest.raises(ValueError, match="valid"):
+        normalize_url(value)
+
+
 def test_normalize_url_handles_blank_values_deterministically():
     assert normalize_url(None) is None
     assert normalize_url(" \t ") is None
@@ -175,6 +190,45 @@ def test_importing_same_profile_twice_updates_instead_of_duplicates(
     assert rows[0]["role"] == "Research Lead"
     assert rows[0]["source"] == "csv"
     assert rows[0]["review_status"] == "verified"
+
+
+def test_sparse_upsert_preserves_omitted_enrichment_and_review_status(
+    profile_connection,
+):
+    connection, project_id = profile_connection
+    original = upsert_profile(
+        connection,
+        project_id,
+        {
+            "name": "Ada Lovelace",
+            "current_company": "Analytical Engines",
+            "university": "University of London",
+            "role": "Researcher",
+            "years_experience": 8,
+            "profile_url": "https://linkedin.com/in/ada",
+            "source": "csv",
+            "review_status": "verified",
+        },
+    )
+
+    repeated = upsert_profile(
+        connection,
+        project_id,
+        {
+            "role": "Research Lead",
+            "profile_url": "https://linkedin.com/in/ada/?trk=search",
+            "source": "search",
+        },
+    )
+
+    assert repeated["id"] == original["id"]
+    assert repeated["name"] == "Ada Lovelace"
+    assert repeated["current_company"] == "Analytical Engines"
+    assert repeated["university"] == "University of London"
+    assert repeated["years_experience"] == 8
+    assert repeated["role"] == "Research Lead"
+    assert repeated["source"] == "search"
+    assert repeated["review_status"] == "verified"
 
 
 def test_dedupe_is_scoped_to_project(profile_connection):

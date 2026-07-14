@@ -1,8 +1,10 @@
 """Profile normalization, validation, and SQLite persistence."""
 
 import hashlib
+import ipaddress
 import json
 import math
+import re
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
@@ -32,6 +34,7 @@ TEXT_FIELDS = (
     "source_query",
 )
 REVIEW_STATUSES = frozenset({"pending", "verified", "rejected"})
+HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
 
 def _normalize_text(value: Any, field: str) -> str | None:
@@ -45,17 +48,52 @@ def _normalize_text(value: Any, field: str) -> str | None:
 
 def normalize_url(value: Any) -> str | None:
     """Return a canonical public HTTP(S) URL, or ``None`` for a blank value."""
-    normalized = _normalize_text(value, "profile_url")
-    if normalized is None:
+    if value is None:
         return None
+    if not isinstance(value, str):
+        raise ValueError("profile_url must be a string")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if any(character.isspace() for character in normalized):
+        raise ValueError("profile_url must be a valid http(s) URL")
 
-    parts = urlsplit(normalized)
+    try:
+        parts = urlsplit(normalized)
+        host = parts.hostname
+        parts.port
+    except ValueError as error:
+        raise ValueError("profile_url must be a valid http(s) URL") from error
     scheme = parts.scheme.lower()
-    if scheme not in {"http", "https"} or not parts.netloc or parts.hostname is None:
-        raise ValueError("profile_url must be an http(s) URL")
+    if (
+        scheme not in {"http", "https"}
+        or not parts.netloc
+        or host is None
+        or not _valid_host(host)
+    ):
+        raise ValueError("profile_url must be a valid http(s) URL")
 
     path = parts.path.rstrip("/")
     return urlunsplit((scheme, parts.netloc.lower(), path, "", ""))
+
+
+def _valid_host(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+
+    if ":" in host or host.replace(".", "").isdigit():
+        return False
+    try:
+        ascii_host = host.encode("idna").decode("ascii").removesuffix(".")
+    except UnicodeError:
+        return False
+    return (
+        0 < len(ascii_host) <= 253
+        and all(HOST_LABEL.fullmatch(label) for label in ascii_host.split("."))
+    )
 
 
 def _identity_part(value: Any) -> str:
@@ -135,12 +173,20 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, Any]:
 def upsert_profile(
     conn: sqlite3.Connection, project_id: int, data: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Insert a profile or replace its writable fields on an identity match."""
+    """Insert a profile or update supplied fields on an identity match."""
     profile = validate_profile(data)
     dedupe_key = profile_dedupe_key(profile)
     columns = ", ".join(PROFILE_FIELDS)
     placeholders = ", ".join("?" for _ in PROFILE_FIELDS)
-    updates = ", ".join(f"{field} = excluded.{field}" for field in PROFILE_FIELDS)
+    supplied_fields = set(data)
+    updates = [
+        f"{field} = excluded.{field}"
+        for field in PROFILE_FIELDS
+        if field in supplied_fields
+    ]
+    if "profile_url" in supplied_fields:
+        updates.insert(0, "normalized_url = excluded.normalized_url")
+    updates.append("updated_at = CURRENT_TIMESTAMP")
     values = [profile[field] for field in PROFILE_FIELDS]
 
     row = conn.execute(
@@ -149,9 +195,7 @@ def upsert_profile(
             project_id, dedupe_key, normalized_url, {columns}
         ) VALUES (?, ?, ?, {placeholders})
         ON CONFLICT (project_id, dedupe_key) DO UPDATE SET
-            normalized_url = excluded.normalized_url,
-            {updates},
-            updated_at = CURRENT_TIMESTAMP
+            {", ".join(updates)}
         RETURNING *
         """,
         (project_id, dedupe_key, profile["profile_url"], *values),

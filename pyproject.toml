@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "compliant-talent-research"
+version = "0.1.0"
+description = "Compliance-first public talent research application"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "jinja2",
+    "python-multipart",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

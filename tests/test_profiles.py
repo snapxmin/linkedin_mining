@@ -40,6 +40,10 @@ def profile_connection(tmp_path):
             "http://example.com/public/profile/?source=search#summary",
             "http://example.com/public/profile",
         ),
+        (
+            "https://profiles.example.com:8443/public/person/",
+            "https://profiles.example.com:8443/public/person",
+        ),
     ],
 )
 def test_normalize_url_removes_query_fragment_and_trailing_slash(value, expected):
@@ -63,6 +67,19 @@ def test_normalize_url_rejects_non_http_urls(value):
     ],
 )
 def test_normalize_url_rejects_whitespace_and_invalid_hosts(value):
+    with pytest.raises(ValueError, match="valid"):
+        normalize_url(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        r"https://example.com\@evil.com/x",
+        "https://example.com@evil.com/x",
+        r"https://example.com/public\@evil.com/x",
+    ],
+)
+def test_normalize_url_rejects_authority_confusion(value):
     with pytest.raises(ValueError, match="valid"):
         normalize_url(value)
 

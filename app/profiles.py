@@ -55,7 +55,7 @@ def normalize_url(value: Any) -> str | None:
     normalized = value.strip()
     if not normalized:
         return None
-    if any(character.isspace() for character in normalized):
+    if any(character.isspace() for character in normalized) or "\\" in normalized:
         raise ValueError("profile_url must be a valid http(s) URL")
 
     try:
@@ -69,12 +69,41 @@ def normalize_url(value: Any) -> str | None:
         scheme not in {"http", "https"}
         or not parts.netloc
         or host is None
+        or not _valid_authority(parts.netloc, host)
         or not _valid_host(host)
     ):
         raise ValueError("profile_url must be a valid http(s) URL")
 
     path = parts.path.rstrip("/")
     return urlunsplit((scheme, parts.netloc.lower(), path, "", ""))
+
+
+def _valid_authority(authority: str, parsed_host: str) -> bool:
+    if any(character in authority for character in "\\@%/?#"):
+        return False
+
+    if authority.startswith("["):
+        closing_bracket = authority.find("]")
+        if closing_bracket < 0:
+            return False
+        raw_host = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (
+            not suffix.startswith(":")
+            or not suffix[1:].isascii()
+            or not suffix[1:].isdigit()
+        ):
+            return False
+    else:
+        if "[" in authority or "]" in authority or authority.count(":") > 1:
+            return False
+        raw_host, separator, port = authority.rpartition(":")
+        if not separator:
+            raw_host = authority
+        elif not port.isascii() or not port.isdigit():
+            return False
+
+    return raw_host.casefold() == parsed_host.casefold()
 
 
 def _valid_host(host: str) -> bool:

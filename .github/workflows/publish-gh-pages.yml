@@ -18,10 +18,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare static site
+        run: |
+          mkdir -p site
+          cp docs/index.html site/
+          cp -r docs/assets site/
+          cp docs/.nojekyll site/
+
       - name: Publish docs to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
+          publish_dir: ./site
           publish_branch: gh-pages
           force_orphan: true

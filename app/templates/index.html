@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}项目列表 · Talent Research{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>人才研究项目</h1>
+  <p>以 OKX 为例，聚合公开搜索结果与 CSV 数据，统计大学、职位与地点分布。</p>
+</section>
+
+<section class="panel">
+  <h2>创建项目</h2>
+  <form id="create-project-form" class="stack-form">
+    <label>
+      项目名称
+      <input name="name" required placeholder="OKX 人才画像研究">
+    </label>
+    <label>
+      目标公司
+      <input name="company" required placeholder="OKX">
+    </label>
+    <button type="submit">创建项目</button>
+  </form>
+  <p id="create-project-message" class="message" hidden></p>
+</section>
+
+<section class="panel">
+  <h2>已有项目</h2>
+  {% if projects %}
+  <ul class="project-list">
+    {% for project in projects %}
+    <li>
+      <a href="/projects/{{ project.id }}">
+        <strong>{{ project.name }}</strong>
+        <span>{{ project.company }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">还没有项目。先创建一个 OKX 研究项目开始。</p>
+  {% endif %}
+</section>
+{% endblock %}

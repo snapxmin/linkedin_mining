@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · Talent Research{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <div>
+    <p class="eyebrow">项目 #{{ project.id }}</p>
+    <h1>{{ project.name }}</h1>
+    <p>目标公司：<strong>{{ project.company }}</strong></p>
+  </div>
+  <div class="hero-actions">
+    <a class="button secondary" href="/">返回列表</a>
+    <a class="button" id="export-link" href="/api/projects/{{ project.id }}/export.csv?scope=verified">导出 CSV</a>
+  </div>
+</section>
+
+<section class="grid two-col">
+  <section class="panel">
+    <h2>公开搜索</h2>
+    <p class="muted">生成 <code>site:linkedin.com/in "{{ project.company }}"</code> 查询，仅使用搜索元数据。</p>
+    <form id="search-form" class="stack-form" data-project-id="{{ project.id }}">
+      <label>
+        职位关键词（每行一个，最多 {{ max_search_roles }} 个）
+        <textarea name="roles" rows="4" placeholder="software engineer&#10;product manager"></textarea>
+      </label>
+      <button type="submit">运行搜索</button>
+    </form>
+    <p id="search-message" class="message" hidden></p>
+  </section>
+
+  <section class="panel">
+    <h2>CSV 导入</h2>
+    <p class="muted">支持 Name、Current Company、University、Degree、Location、Role、Years、URL、Review Status。</p>
+    <form id="import-form" class="stack-form" data-project-id="{{ project.id }}">
+      <label>
+        选择 CSV 文件
+        <input type="file" name="file" accept=".csv,text/csv" required>
+      </label>
+      <button type="submit">导入</button>
+    </form>
+    <p id="import-message" class="message" hidden></p>
+  </section>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>统计分布</h2>
+    <label class="inline-field">
+      样本范围
+      <select id="analytics-scope">
+        <option value="verified">仅已复核</option>
+        <option value="all">全部非拒绝</option>
+      </select>
+    </label>
+  </div>
+  <p id="sample-size" class="muted">样本量：0</p>
+  <div class="chart-grid" id="analytics-charts"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>候选人复核</h2>
+    <label class="inline-field">
+      复核状态
+      <select id="profile-filter">
+        <option value="">全部</option>
+        <option value="pending">待复核</option>
+        <option value="verified">已复核</option>
+        <option value="rejected">已拒绝</option>
+      </select>
+    </label>
+  </div>
+  <div class="table-wrap">
+    <table id="profiles-table">
+      <thead>
+        <tr>
+          <th>姓名</th>
+          <th>公司</th>
+          <th>大学</th>
+          <th>学位</th>
+          <th>地点</th>
+          <th>职位</th>
+          <th>年限</th>
+          <th>状态</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="pagination">
+    <button type="button" id="prev-page">上一页</button>
+    <span id="page-info">第 1 页</span>
+    <button type="button" id="next-page">下一页</button>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  window.PROJECT_ID = {{ project.id }};
+  window.MAX_ROLE_LENGTH = {{ max_role_length }};
+</script>
+{% endblock %}

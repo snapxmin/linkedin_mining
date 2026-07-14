@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OKX 人才画像研究 · LinkedIn Mining</title>
+  <meta name="description" content="合规公开信息人才画像研究演示：OKX 大学与职位分布统计">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="./">LinkedIn Talent Research</a>
+      <p class="tagline">合规公开信息研究 · 不抓取受限页面</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel hero">
+      <div>
+        <p class="eyebrow">演示项目 · OKX</p>
+        <h1>OKX 人才画像研究</h1>
+        <p>基于公开搜索元数据与 CSV 复核的合规研究流程演示。本页面为 <strong>GitHub Pages 静态演示</strong>，完整 API 与数据库功能需在本地运行。</p>
+      </div>
+      <div class="hero-actions">
+        <a class="button" href="https://github.com/snapxmin/linkedin_mining" target="_blank" rel="noreferrer">查看源码</a>
+        <a class="button secondary" href="#run-local">本地部署</a>
+      </div>
+    </section>
+
+    <section class="grid two-col">
+      <section class="panel">
+        <h2>研究流程</h2>
+        <ol class="steps">
+          <li>生成 <code>site:linkedin.com/in "OKX"</code> 公开搜索查询</li>
+          <li>采集搜索引擎公开索引的标题、摘要与 URL</li>
+          <li>导入 CSV 并人工复核字段</li>
+          <li>统计大学、职位、地点与学位分布</li>
+          <li>导出规范化 CSV 供进一步分析</li>
+        </ol>
+      </section>
+      <section class="panel">
+        <h2>样本概览</h2>
+        <ul class="stats-list" id="summary-stats"></ul>
+        <p class="muted">演示数据为虚构样本，用于展示 1000+ 人规模下的统计稳定性。</p>
+      </section>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>大学分布</h2>
+        <span class="badge">verified 样本</span>
+      </div>
+      <p id="sample-size" class="muted"></p>
+      <div class="chart-grid" id="university-chart"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>职位与地点</h2>
+      </div>
+      <div class="chart-grid" id="secondary-charts"></div>
+    </section>
+
+    <section class="panel" id="run-local">
+      <h2>本地运行完整系统</h2>
+      <pre><code>git clone https://github.com/snapxmin/linkedin_mining.git
+cd linkedin_mining
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+cp .env.example .env
+uvicorn app.main:app --reload</code></pre>
+      <p>启动后访问 <code>http://127.0.0.1:8000/</code> 使用搜索、CSV 导入、复核与导出功能。</p>
+      <p class="muted">可选：在 <code>.env</code> 中配置 <code>SERPER_API_KEY</code> 启用真实公开索引搜索。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>仅用于公开信息研究演示。请遵守数据来源条款与当地隐私法律。</p>
+    </div>
+  </footer>
+
+  <script src="assets/demo.js"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import io
 
 import pytest
 
+import app.analytics as analytics
 from app.analytics import aggregate, export_csv, summary
 from app.db import connect, init_db
 from app.profiles import upsert_profile
@@ -71,6 +72,11 @@ def analytics_connection(tmp_path):
     ]
     for profile in profiles:
         upsert_profile(connection, first_project_id, profile)
+    exported_name = '艾达, "Ada"\nLovelace'
+    connection.execute(
+        "UPDATE profiles SET name = ? WHERE project_id = ? AND name = ?",
+        (exported_name, first_project_id, "Ada"),
+    )
 
     upsert_profile(
         connection,
@@ -180,7 +186,12 @@ def test_export_is_utf8_normalized_scoped_and_project_isolated(
         "source_query",
         "review_status",
     ]
-    assert [row["name"] for row in rows] == ["Ada", "Grace", "Katherine", "Linus"]
+    assert [row["name"] for row in rows] == [
+        '艾达, "Ada"\nLovelace',
+        "Grace",
+        "Katherine",
+        "Linus",
+    ]
     assert [row["review_status"] for row in rows] == [
         "verified",
         "verified",
@@ -195,7 +206,30 @@ def test_export_is_utf8_normalized_scoped_and_project_isolated(
             io.StringIO(export_csv(connection, project_id).decode("utf-8"), newline="")
         )
     )
-    assert [row["name"] for row in verified_rows] == ["Ada", "Grace", "Katherine"]
+    assert [row["name"] for row in verified_rows] == [
+        '艾达, "Ada"\nLovelace',
+        "Grace",
+        "Katherine",
+    ]
+
+
+def test_export_writes_directly_to_binary_buffer(analytics_connection, monkeypatch):
+    connection, project_id = analytics_connection
+
+    class BinaryOnlyIO:
+        BytesIO = io.BytesIO
+        TextIOWrapper = io.TextIOWrapper
+
+        @staticmethod
+        def StringIO(*args, **kwargs):
+            raise AssertionError("export must not stage the complete CSV as Unicode")
+
+    monkeypatch.setattr(analytics, "io", BinaryOnlyIO)
+
+    content = export_csv(connection, project_id)
+
+    assert isinstance(content, bytes)
+    assert '艾达, ""Ada""\nLovelace'.encode() in content
 
 
 def test_export_mitigates_spreadsheet_formula_injection(tmp_path):

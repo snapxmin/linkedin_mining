@@ -119,12 +119,17 @@ def export_csv(
         (project_id, *statuses),
     )
 
-    output = io.StringIO(newline="")
-    writer = csv.writer(output, lineterminator="\r\n")
-    writer.writerow(EXPORT_COLUMNS)
-    for row in rows:
-        writer.writerow(
-            "" if row[column] is None else _csv_safe(row[column])
-            for column in EXPORT_COLUMNS
-        )
-    return output.getvalue().encode("utf-8")
+    output = io.BytesIO()
+    text_output = io.TextIOWrapper(output, encoding="utf-8", newline="")
+    try:
+        writer = csv.writer(text_output, lineterminator="\r\n")
+        writer.writerow(EXPORT_COLUMNS)
+        for row in rows:
+            writer.writerow(
+                "" if row[column] is None else _csv_safe(row[column])
+                for column in EXPORT_COLUMNS
+            )
+        text_output.flush()
+    finally:
+        text_output.detach()
+    return output.getvalue()
